@@ -35,7 +35,7 @@ export async function triggerCall(
     body: JSON.stringify({
       agent_id: input.agentId,
       recipient_phone_number: input.contactNumber,
-      recipient_data: input.dynamicData,
+      user_data: input.dynamicData,
     }),
   });
 
