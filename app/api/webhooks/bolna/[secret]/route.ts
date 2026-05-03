@@ -15,6 +15,20 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => ({}));
+
+  // Bolna fires multiple webhooks per execution (in-progress, completed, etc).
+  // Only act on terminal events — otherwise we overwrite real screening data
+  // with empty in-progress payloads. Ack with 200 so Bolna doesn't retry.
+  const status = String(body?.status ?? "").toLowerCase();
+  const isTerminal =
+    status === "completed" ||
+    status === "failed" ||
+    status === "missed" ||
+    status === "no_answer";
+  if (!isTerminal) {
+    return NextResponse.json({ ok: true, ignored: true, reason: `non-terminal status: ${status || "unknown"}` });
+  }
+
   const parsed = parseWebhook(body);
 
   if (!parsed.executionId) {
