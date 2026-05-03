@@ -8,7 +8,7 @@ export default function UploadDropzone({
   onUploaded,
 }: {
   roleId: string;
-  onUploaded: () => void;
+  onUploaded: (inserted: any[]) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -40,9 +40,10 @@ export default function UploadDropzone({
       setErrors([j.error ?? "upload failed"]);
       return;
     }
+    const j = await res.json().catch(() => ({}));
     setPreview(null);
     if (fileRef.current) fileRef.current.value = "";
-    onUploaded();
+    onUploaded(j.candidates ?? []);
   }
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import UploadDropzone from "./UploadDropzone";
 import CandidateTable from "./CandidateTable";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -21,6 +21,25 @@ export default function RoleDashboard({
   const [candidates, setCandidates] = useState<CandidateWithScreening[]>(initialCandidates);
   const [batchBusy, setBatchBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const candidatesRef = useRef(candidates);
+  candidatesRef.current = candidates;
+
+  const refresh = useCallback(async () => {
+    const sb = supabaseBrowser();
+    const { data } = await sb
+      .from("candidates")
+      .select("*, screening:screenings(*)")
+      .eq("role_id", role.id)
+      .order("created_at", { ascending: true });
+    if (data) {
+      setCandidates(
+        (data as any[]).map((c) => ({
+          ...c,
+          screening: Array.isArray(c.screening) ? c.screening[0] ?? null : c.screening ?? null,
+        })),
+      );
+    }
+  }, [role.id]);
 
   // Realtime subscriptions: candidates + screenings for this role.
   useEffect(() => {
@@ -66,33 +85,46 @@ export default function RoleDashboard({
           );
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (typeof window !== "undefined") {
+          (window as any).__realtimeStatus = status;
+        }
+      });
 
     return () => {
       sb.removeChannel(ch);
     };
   }, [role.id]);
 
-  async function refresh() {
-    // Realtime covers the steady state; this is a fallback right after CSV upload
-    // so the user sees rows immediately even if a realtime event is delayed.
-    const sb = supabaseBrowser();
-    const { data } = await sb
-      .from("candidates")
-      .select("*, screening:screenings(*)")
-      .eq("role_id", role.id)
-      .order("created_at", { ascending: true });
-    if (data) {
-      setCandidates(
-        (data as any[]).map((c) => ({
-          ...c,
-          screening: Array.isArray(c.screening) ? c.screening[0] ?? null : c.screening ?? null,
-        })),
+  // Polling fallback. Realtime can be silently disabled at the project/table
+  // level; polling guarantees the UI converges within ~2s even if it is. Polls
+  // faster while there are active calls, slower when idle.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await refresh();
+      if (cancelled) return;
+      const hasActive = candidatesRef.current.some(
+        (c) => c.status === "calling" || c.status === "pending",
       );
-    }
-  }
+      const delay = hasActive ? 2000 : 6000;
+      timer = setTimeout(tick, delay);
+    };
+
+    timer = setTimeout(tick, 2000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [refresh]);
 
   async function triggerOne(candidateId: string) {
+    setCandidates((prev) =>
+      prev.map((c) => (c.id === candidateId ? { ...c, status: "calling" } : c)),
+    );
     const res = await fetch("/api/calls/trigger", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -102,11 +134,15 @@ export default function RoleDashboard({
       const j = await res.json().catch(() => ({}));
       setToast(`Call failed: ${j.error ?? "unknown"}`);
       setTimeout(() => setToast(null), 4000);
+      await refresh();
     }
   }
 
   async function triggerBatch() {
     setBatchBusy(true);
+    setCandidates((prev) =>
+      prev.map((c) => (c.status === "pending" ? { ...c, status: "calling" } : c)),
+    );
     const res = await fetch("/api/calls/trigger-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -118,6 +154,7 @@ export default function RoleDashboard({
       setToast(`Triggered ${j.triggered ?? 0} call(s)`);
     } else {
       setToast(`Batch failed: ${j.error ?? "unknown"}`);
+      await refresh();
     }
     setTimeout(() => setToast(null), 4000);
   }
@@ -173,7 +210,21 @@ export default function RoleDashboard({
         <Stat label="Qualified (≥70)" value={stats.qualified} accent="ok" />
       </div>
 
-      <UploadDropzone roleId={role.id} onUploaded={refresh} />
+      <UploadDropzone
+        roleId={role.id}
+        onUploaded={(inserted) => {
+          if (inserted.length > 0) {
+            setCandidates((prev) => {
+              const existing = new Set(prev.map((c) => c.id));
+              const fresh = inserted
+                .filter((c: Candidate) => !existing.has(c.id))
+                .map((c: Candidate) => ({ ...c, screening: null }));
+              return [...prev, ...fresh];
+            });
+          }
+          refresh();
+        }}
+      />
 
       <CandidateTable candidates={candidates} onTrigger={triggerOne} />
 
