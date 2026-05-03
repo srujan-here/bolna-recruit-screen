@@ -1,0 +1,14 @@
+node_modules
+.next
+.vercel
+out
+dist
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.idea
+.vscode/*
+!.vscode/settings.json
+next-env.d.ts
