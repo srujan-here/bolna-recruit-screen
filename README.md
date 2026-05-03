@@ -5,6 +5,14 @@ Recruiters upload a candidate CSV, Aria (the Bolna agent) calls each one and run
 
 > Submission for the Bolna Full Stack Engineer take-home.
 
+## Try it
+
+- 🌐 **Live app:** https://bolna-recruit-screen.vercel.app
+- 🎬 **Demo video:** _link added on submission_
+- 🎙️ **Sample call recording (MP3):** [score-88 screen, 85s](https://bolna-recordings-india.s3.ap-south-1.amazonaws.com/plivo/28ef144c-4824-4581-a420-36e97850f840.mp3) — Aria calling "Srujan" for the Senior Backend Engineer role at Acme Labs
+
+End-to-end verified with multiple real calls. Latest: 7 fields extracted, **rank score 88**, dashboard updated within ~2s of webhook delivery.
+
 ## Why this use case
 
 Recruiters lose ~12 minutes per candidate on the same intro screen — confirming experience, current/expected CTC, notice period, relocation. For 100 candidates per role, that's 20 hours of repetitive work where the structured outputs (not the conversation) are what actually matters downstream. Bolna explicitly markets "streamline hiring" as a flagship use case, so this hits a workflow Bolna's own customers buy.
@@ -17,14 +25,14 @@ Recruiters lose ~12 minutes per candidate on the same intro screen — confirmin
 Recruiter
     │ uploads CSV
     ▼
-Next.js (Vercel)  ──────►  Bolna /call  (with dynamic_data)
+Next.js (Vercel)  ──────►  Bolna POST /call  (user_data: {candidate_name, role_title, ...})
     ▲                            │
     │ Realtime                    ▼
-    │                       Aria runs screening conversation
+    │ + 2s polling          Aria runs screening conversation (variables substituted)
 Supabase Postgres                  │
     ▲                              ▼
     └──── webhook ───── /api/webhooks/bolna/<secret>
-                        (extracts → ranks → upserts)
+       upsert ranked screening    (terminal events only: completed/failed/missed/no_answer)
 ```
 
 - **Frontend / API**: Next.js 15 (App Router, TypeScript) on Vercel
@@ -126,9 +134,20 @@ bolna/sample-candidates.csv         3 fake rows for demo
 
 ## Verification checklist
 
-- [ ] `pnpm build` succeeds
-- [ ] Bolna playground call to your own number returns extracted fields
-- [ ] `POST /api/calls/trigger` returns `execution_id`
-- [ ] Webhook lands → row appears in `screenings`
-- [ ] Dashboard updates without manual refresh
-- [ ] `Export shortlist` downloads sorted CSV
+All boxes confirmed against the deployed app at https://bolna-recruit-screen.vercel.app:
+
+- [x] `pnpm build` succeeds (Vercel deploys clean)
+- [x] Bolna playground call to a verified number returns all 7 extracted fields
+- [x] `POST /api/calls/trigger` returns `execution_id` (uses Bolna's `user_data` field for variable substitution)
+- [x] Webhook lands → row appears in `screenings` (only on terminal status events)
+- [x] Dashboard updates without manual refresh (Realtime + 2s polling fallback)
+- [x] `Export shortlist` downloads sorted CSV
+
+## Notes from build
+
+A few non-obvious things this implementation handles:
+
+- **`user_data`, not `dynamic_data`** — Bolna's `/call` endpoint accepts dynamic template variables under `user_data`. Other field names are silently ignored by the API.
+- **Filter non-terminal webhooks** — Bolna fires multiple webhooks per execution (in-progress, completed). Only `status: completed | failed | missed | no_answer` are processed; others are acked but ignored to avoid clobbering completed data with empty in-progress payloads.
+- **Round float→int** — Bolna sends `conversation_duration` as a float (e.g. `91.8`), but `duration_seconds` is `INT` in Postgres. The webhook handler `Math.round`s before upsert; the upsert error is now surfaced as a 500 instead of being silently swallowed.
+- **Polling fallback** — even though Realtime is wired up, Supabase's per-table Realtime toggle defaults off in some projects; a 2s/6s polling pass guarantees UI convergence regardless.
