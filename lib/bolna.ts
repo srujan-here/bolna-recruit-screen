@@ -35,7 +35,7 @@ export async function triggerCall(
     body: JSON.stringify({
       agent_id: input.agentId,
       recipient_phone_number: input.contactNumber,
-      dynamic_data: input.dynamicData,
+      recipient_data: input.dynamicData,
     }),
   });
 
@@ -147,7 +147,9 @@ export function parseWebhook(body: any): ParsedWebhook {
     durationSeconds:
       asNumber(body?.duration) ??
       asNumber(body?.call_duration) ??
-      asNumber(body?.duration_seconds),
+      asNumber(body?.duration_seconds) ??
+      asNumber(body?.conversation_duration) ??
+      asNumber(body?.telephony_data?.duration),
     transcript: body?.transcript ?? body?.messages ?? body?.conversation ?? null,
     extracted: {
       years_experience: asNumber(pick(extracted, "years_experience")),
